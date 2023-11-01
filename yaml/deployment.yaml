@@ -1,0 +1,39 @@
+﻿# Rest of your pipeline configuration
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-deployment
+spec:
+  replicas: 3  # Number of desired replicas
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: api-container
+          image: weatherappacr.azurecr.io/demo-smartwyre:latest
+          ports:
+            - containerPort: 3000
+          resources:
+            limits:
+              cpu: "0.5"  
+              memory: "256Mi"  
+            requests:
+              cpu: "0.2"   
+              memory: "128Mi"  
+          readinessProbe:
+            httpGet:
+              path: api/Healthz/readiness
+              port: 3000              
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: api/Healthz/liveness
+              port: 3000               
+            initialDelaySeconds: 5
+            periodSeconds: 10

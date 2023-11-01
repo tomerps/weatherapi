@@ -1,0 +1,60 @@
+﻿trigger:
+  branches:
+    include:
+      - main
+
+pr: none
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+- stage: Build
+  jobs:
+  - job: BuildAndTest
+    steps:
+    - script: dotnet restore
+      displayName: 'Restore .NET Core dependencies'
+
+    - script: dotnet build
+      displayName: 'Build the Weather App'
+
+    - script: |
+        docker build -t $(Build.Repository.Name)-$(Build.BuildNumber) -t $(Build.Repository.Name):latest -f Dockerfile .
+        docker login $(azureDockerRegistry) -u $(acrUsername) -p $(acrPassword)
+        docker tag $(Build.Repository.Name)-$(Build.BuildNumber) $(azureDockerRegistry)/$(Build.Repository.Name):$(Build.BuildNumber)
+        docker tag $(Build.Repository.Name)-$(Build.BuildNumber) $(azureDockerRegistry)/$(Build.Repository.Name):latest
+        docker push $(azureDockerRegistry)/$(Build.Repository.Name):$(Build.BuildNumber)
+        docker push $(azureDockerRegistry)/$(Build.Repository.Name):latest
+      displayName: 'Build & Publish - Docker image(s)'
+
+    # Install Trivy
+    - script: |
+        wget https://github.com/aquasecurity/trivy/releases/download/v0.18.0/trivy_0.18.0_Linux-64bit.deb
+        sudo dpkg -i trivy_0.18.0_Linux-64bit.deb
+      displayName: 'Install Vulnerability Scanner'
+
+    # Run Trivy scan on the Docker image
+    - script: trivy $(azureDockerRegistry)/$(Build.Repository.Name):$(Build.BuildNumber)
+      displayName: 'Vulnerability Scanner - Report'
+
+- stage: Deploy
+  jobs:
+  - job: DeployToAKS
+    steps:
+    - script: |
+        az login --service-principal -u $(servicePrincipalId) -p $(servicePrincipalKey) --tenant $(tenantId)
+        az aks get-credentials --resource-group $(resourceGroupName) --name $(aksClusterName)
+        export BUILD_TAG=$(Build.BuildNumber)
+        echo $BUILD_TAG
+        kubectl delete -f yaml/deployment.yaml
+        kubectl delete -f yaml/network-policy.yaml
+        kubectl delete -f yaml/loadbalancer-service.yaml
+        #kubectl delete -f yaml/ingress-controller.yaml
+        kubectl apply -f yaml/deployment.yaml
+        kubectl apply -f yaml/network-policy.yaml
+        kubectl apply -f yaml/loadbalancer-service.yaml
+        kubectl apply -f yaml/ingress-controller.yaml        
+        kubectl wait --for=condition=Ready pods --all -n default
+
+      displayName: 'Deploy to Kubernetes Services to AKS Cluster'
